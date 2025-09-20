@@ -381,6 +381,7 @@ def test_implementation(name, algorithm=None, target="auto", reference_output=No
             reference_output = reference_output.to(output.device)
 
         diff = torch.max(torch.abs(reference_output - output)).item()
+
         print(f"   Max difference: {diff:.2e}")
 
         is_correct = diff < 1e-4

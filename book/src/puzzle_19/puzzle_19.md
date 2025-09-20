@@ -115,7 +115,7 @@ To complete this puzzle, we'll leverage the tiled matmul kernel from [Puzzle 16]
 
 **Transpose Kernel Implementation Guide:**
 
-1. **Shared Memory Setup**: Use `tb[dtype]().row_major[TPB, TPB]().shared().alloc()` to create a TPB×TPB shared memory tile for efficient data exchange between threads
+1. **Shared Memory Setup**: Use `tb[dtype]().row_major[TRANSPOSE_BLOCK_DIM_Y, TRANSPOSE_BLOCK_DIM_X]().shared().alloc()` to create a TRANSPOSE_BLOCK_DIM_Y×TRANSPOSE_BLOCK_DIM_X shared memory tile for efficient data exchange between threads
 
 2. **Thread Indexing**: Map threads to matrix elements:
    - `local_row = thread_idx.y`, `local_col = thread_idx.x` (position within the block)
