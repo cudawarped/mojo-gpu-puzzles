@@ -13,7 +13,8 @@ from utils import StaticTuple
 alias MATMUL_BLOCK_DIM_XY = 16  # Square blocks for a, b and output
 alias MATMUL_NUM_THREADS = MATMUL_BLOCK_DIM_XY * MATMUL_BLOCK_DIM_XY
 alias MATMUL_BLOCK_DIM_COUNT = 2
-alias TRANSPOSE_BLOCK_DIM_XY = 16  # Square blocks for input and output
+alias TRANSPOSE_BLOCK_DIM_Y = 15
+alias TRANSPOSE_BLOCK_DIM_X = 13
 alias TPB = 16
 alias dtype = DType.float32
 
@@ -151,26 +152,29 @@ fn transpose_kernel[
     """Transpose matrix using shared memory tiling for coalesced access.
     We will learn more about coalesced access in the next part.
     """
-    shared_tile = tb[dtype]().row_major[TRANSPOSE_BLOCK_DIM_XY, TRANSPOSE_BLOCK_DIM_XY]().shared().alloc()
+    shared_tile = tb[dtype]().row_major[TRANSPOSE_BLOCK_DIM_Y, TRANSPOSE_BLOCK_DIM_X]().shared().alloc()
 
-    local_row = thread_idx.y
-    local_col = thread_idx.x
+    local_row_in = thread_idx.x // TRANSPOSE_BLOCK_DIM_X
+    local_col_in = thread_idx.x % TRANSPOSE_BLOCK_DIM_X
 
-    global_row = block_idx.y * TRANSPOSE_BLOCK_DIM_XY + local_row
-    global_col = block_idx.x * TRANSPOSE_BLOCK_DIM_XY + local_col
+    global_row = block_idx.y * TRANSPOSE_BLOCK_DIM_Y + local_row_in
+    global_col = block_idx.x * TRANSPOSE_BLOCK_DIM_X + local_col_in
 
     if global_row < rows and global_col < cols:
-        shared_tile[local_row, local_col] = inp[global_row, global_col]
+        shared_tile[local_row_in, local_col_in] = inp[global_row, global_col]
 
     barrier()
 
-    out_row = block_idx.x * TRANSPOSE_BLOCK_DIM_XY + local_row
-    out_col = block_idx.y * TRANSPOSE_BLOCK_DIM_XY + local_col
+    local_row_out = thread_idx.x // TRANSPOSE_BLOCK_DIM_Y
+    local_col_out = thread_idx.x % TRANSPOSE_BLOCK_DIM_Y
+
+    out_row = block_idx.x * TRANSPOSE_BLOCK_DIM_X + local_row_out
+    out_col = block_idx.y * TRANSPOSE_BLOCK_DIM_Y + local_col_out
 
     # Store data from shared memory to global memory (coalesced write)
     # Note: we transpose the shared memory access pattern
     if out_row < cols and out_col < rows:
-        output[out_row, out_col] = shared_tile[local_col, local_row]
+        output[out_row, out_col] = shared_tile[local_col_out, local_row_out]
 
 
 # ANCHOR_END: transpose_kernel_solution
@@ -544,8 +548,8 @@ struct LayerNormLinearCustomOp:
                 ](transposed_weight_buffer.unsafe_ptr())
 
                 # Transpose the weight matrix
-                transpose_blocks_x = (hidden_dim + TRANSPOSE_BLOCK_DIM_XY - 1) // TRANSPOSE_BLOCK_DIM_XY
-                transpose_blocks_y = (output_dim + TRANSPOSE_BLOCK_DIM_XY - 1) // TRANSPOSE_BLOCK_DIM_XY
+                transpose_blocks_x = (hidden_dim + TRANSPOSE_BLOCK_DIM_X - 1) // TRANSPOSE_BLOCK_DIM_X
+                transpose_blocks_y = (output_dim + TRANSPOSE_BLOCK_DIM_Y - 1) // TRANSPOSE_BLOCK_DIM_Y
                 gpu_ctx.enqueue_function[
                     transpose_kernel[
                         weight_layout,
@@ -557,7 +561,7 @@ struct LayerNormLinearCustomOp:
                     transposed_weight_tensor,
                     linear_weight_tensor,
                     grid_dim=(transpose_blocks_x, transpose_blocks_y),
-                    block_dim=(TRANSPOSE_BLOCK_DIM_XY, TRANSPOSE_BLOCK_DIM_XY),
+                    block_dim=TRANSPOSE_BLOCK_DIM_X * TRANSPOSE_BLOCK_DIM_Y,
                 )
 
                 # Reshape tensors for matmul: [batch*seq, hidden] @ [hidden, output] -> [batch*seq, output]
